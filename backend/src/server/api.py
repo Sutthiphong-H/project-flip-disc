@@ -1,6 +1,6 @@
 """Flask + Socket.IO server the React frontend talks to."""
 
-from flask import Flask, jsonify
+from flask import Flask, Response, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO
 
@@ -24,8 +24,15 @@ def create_server():
             "resolution": list(settings.FLIPDISC_RESOLUTION),
             "mode": latest.get("mode"),
             "fps": latest.get("fps", 0.0),
-            "blackout": latest.get("blackout"),
+            "people": latest.get("people"),
+            "nearest_m": latest.get("nearest_m"),
         })
+
+    @app.route("/debug.mjpg")
+    def debug_stream():
+        # Camera frame, non-silhouette dimmed, a distance box per person.
+        return Response(publisher.mjpeg(),
+                        mimetype="multipart/x-mixed-replace; boundary=frame")
 
     @socketio.on("connect")
     def on_connect():

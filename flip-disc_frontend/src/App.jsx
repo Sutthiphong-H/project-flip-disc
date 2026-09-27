@@ -5,7 +5,7 @@ import NavBar from "./components/Nav";
 const Home = lazy(() => import('./pages/home'));
 const About = lazy(() => import('./pages/about'));
 const Contact = lazy(() => import('./pages/contact'));
-const Test = lazy(() => import('./pages/test'));
+const Display = lazy(() => import('./pages/display'));
 
 const App = () => {
 
@@ -14,7 +14,7 @@ const App = () => {
         {/* <NavBar /> */}
         <Suspense fallback={<div className="container">Loading...</div>}>
         <Routes>
-          <Route path="/" element={<Test />} />
+          <Route path="/" element={<Display />} />
           {/* <Route path="/about" element={<About />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/test" element={<Test />} /> */}

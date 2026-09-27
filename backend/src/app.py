@@ -2,9 +2,9 @@
 
     python src/app.py
 
-Webcam -> YOLO person detection -> U2NET segmentation -> 80x45 binary matrix,
-streamed to the React frontend over Socket.IO. With nobody in front of the
-camera the idle clip loops instead.
+Webcam -> RVM (or U2NET) segmentation -> people beyond MAX_PERSON_DISTANCE_M dropped ->
+80x45 binary matrix, streamed to the React frontend over Socket.IO. With nobody
+in range the idle clip loops instead.
 """
 
 from threading import Thread

@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+backend/.cache/
 venv/
 
 # Model weights (downloaded separately, see README)

@@ -6,7 +6,8 @@ import cv2
 
 from settings import CAMERA_FPS, CAMERA_INDEX, INPUT_RESOLUTION
 
-# DirectShow opens far faster than MSMF on Windows.
+# DirectShow, not Media Foundation: MSMF reports 30 fps on this webcam but pads
+# it with duplicate frames -- DirectShow delivered more unique frames per second.
 _BACKEND = cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY
 
 

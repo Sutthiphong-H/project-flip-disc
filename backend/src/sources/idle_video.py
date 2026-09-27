@@ -1,15 +1,18 @@
 """Idle-loop playback.
 
-Only the finished 80x45 masks are cached, not the decoded video. The clip is
-the same every time round, so thresholding it once at startup removes a colour
-convert + two resizes + a threshold from every idle frame -- and 3.6 KB per
-cached frame instead of 230 KB means a long clip costs megabytes, not gigabytes.
+Only the finished 80x45 masks are kept, not the decoded video. The clip is the
+same every time round, so thresholding it once removes a colour convert + two
+resizes + a threshold from every idle frame -- and 3.6 KB per frame instead of
+230 KB means a long clip costs megabytes, not gigabytes.
+
+Decoding the clip takes ~7 s, so the masks are also saved to CACHE_DIR and
+reused until the video file changes.
 """
 
 import cv2
 import numpy as np
 
-from settings import FLIPDISC_RESOLUTION, IDLE_VIDEO_THRESHOLD
+from settings import CACHE_DIR, FLIPDISC_RESOLUTION, IDLE_VIDEO_THRESHOLD
 
 
 class IdleVideo:
@@ -17,25 +20,41 @@ class IdleVideo:
 
     def __init__(self, video_path, resolution=FLIPDISC_RESOLUTION,
                  threshold=IDLE_VIDEO_THRESHOLD):
-        self.resolution = resolution
-        self.masks = []
         self.index = 0
+        self.masks = self._load(video_path, resolution, threshold)
 
-        capture = cv2.VideoCapture(str(video_path))
-        if capture.isOpened():
-            while True:
-                ok, frame = capture.read()
-                if not ok:
-                    break
-                self.masks.append(self._to_mask(frame, resolution, threshold))
-            capture.release()
-
-        if not self.masks:
+        if len(self.masks) == 0:
             print(f"Warning: could not read idle video '{video_path}', using a blank frame")
-            self.masks = [np.zeros(resolution[::-1], dtype=np.uint8)]
+            self.masks = np.zeros((1, resolution[1], resolution[0]), dtype=np.uint8)
 
-        print(f"Idle video: {len(self.masks)} frames cached "
-              f"({len(self.masks) * self.masks[0].nbytes / 1e6:.1f} MB)")
+        print(f"Idle video: {len(self.masks)} frames ({self.masks.nbytes / 1e6:.1f} MB)")
+
+    @classmethod
+    def _load(cls, video_path, resolution, threshold):
+        if not video_path.exists():
+            return np.empty(0)
+
+        cache = CACHE_DIR / f"{video_path.name}.{resolution[0]}x{resolution[1]}.t{threshold}.npy"
+        if cache.exists() and cache.stat().st_mtime >= video_path.stat().st_mtime:
+            return np.load(cache)
+
+        masks = cls._decode(video_path, resolution, threshold)
+        if len(masks):
+            CACHE_DIR.mkdir(exist_ok=True)
+            np.save(cache, masks)
+        return masks
+
+    @classmethod
+    def _decode(cls, video_path, resolution, threshold):
+        masks = []
+        capture = cv2.VideoCapture(str(video_path))
+        while capture.isOpened():
+            ok, frame = capture.read()
+            if not ok:
+                break
+            masks.append(cls._to_mask(frame, resolution, threshold))
+        capture.release()
+        return np.array(masks, dtype=np.uint8)
 
     @staticmethod
     def _to_mask(frame, resolution, threshold):
