@@ -13,5 +13,8 @@ venv/
 .DS_Store
 Thumbs.db
 
+# The idle clip is too big for git (90 MB); keep it locally, see README
+backend/assets/*.mp4
+
 # Keep the models dir, not the weights
 !backend/models/.gitkeep

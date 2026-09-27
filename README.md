@@ -45,6 +45,8 @@ Put the weights in `backend/models/`:
 - `rvm_mobilenetv3.pth` -- the default model ([download](https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3.pth))
 - `u2net_human_seg.pth` -- only needed for `FLIPDISC_MODEL=u2net` ([download](https://drive.usercontent.google.com/download?id=1m_Kgs91b21gayc2XLW0ou8yugAIadWVP&export=download&authuser=0&confirm=t))
 
+Put the idle clip at `backend/assets/video.mp4` (not in git -- it's 90 MB).
+
 RVM's code in `backend/src/vision/rvm/` is vendored from [RobustVideoMatting](https://github.com/PeterL1n/RobustVideoMatting) and is GPL-3.0.
 
 ```bash
