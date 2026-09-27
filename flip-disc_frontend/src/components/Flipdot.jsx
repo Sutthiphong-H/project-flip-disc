@@ -4,7 +4,8 @@ import createREGL from "regl";
 export const ROWS = 45;
 export const COLS = 80;
 const COUNT = ROWS * COLS;
-const ANIMATION_DURATION = 100; // Animation duration in ms
+const FLIP_MS = 80; // one disc turning over, bounce included
+const SWEEP_MS = 40; // a real controller drives column by column: left edge flips first
 const DOT_SIZE = 0.92; // disc diameter as a fraction of the grid pitch
 
 // Leaf-inspired color palette
@@ -33,11 +34,13 @@ const randomFlips = (flips) => {
 // Dot centres in grid space, -1..1 on both axes. The vertex shader scales this
 // into a letterboxed 80:45 area, so the grid keeps its shape at any window size.
 const positions = new Float32Array(COUNT * 2);
+const sweepDelay = new Float32Array(COUNT); // ms after a frame lands before this disc starts
 for (let i = 0; i < COUNT; i++) {
   const row = Math.floor(i / COLS);
   const col = i % COLS;
   positions[i * 2] = ((col + 0.5) / COLS) * 2 - 1;
   positions[i * 2 + 1] = 1 - ((row + 0.5) / ROWS) * 2;
+  sweepDelay[i] = (col / (COLS - 1)) * SWEEP_MS;
 }
 
 const FlipdotWebGL = ({ matrix }) => {
@@ -134,21 +137,40 @@ const FlipdotWebGL = ({ matrix }) => {
         varying float vAnimationProgress;
         varying vec3 vDotColor;
 
+        const float PI = 3.14159265;
+
+        // Overshoots ~10% past 1 and settles: the disc bouncing off its stop.
+        float easeOutBack(float t) {
+          float u = t - 1.0;
+          return 1.0 + 2.70158 * u * u * u + 1.70158 * u * u;
+        }
+
         void main() {
+          // The disc turns over about its horizontal axis: at 0 the face it is
+          // leaving is up, at PI the new one. Seen from the front it flattens
+          // to an edge and opens out again.
+          float angle = PI * easeOutBack(vAnimationProgress);
+          float squash = abs(cos(angle));
           vec2 centered = gl_PointCoord - vec2(0.5);
-          float dist = length(centered);
+          if (squash < 0.02) discard;
+          centered.y /= squash;
+          if (length(centered) > 0.5) discard;
+          vec2 face = centered + vec2(0.5); // the pattern squashes with the disc
 
-          if (dist > 0.5) discard;
+          // Until it is edge-on, the disc still shows the face it is leaving.
+          float lit = angle < PI * 0.5 ? 1.0 - vFlip : vFlip;
 
-          float t = vAnimationProgress;
-          float animEffect = sin(t * 3.14);
+          // Real discs have a round notch in the edge for the coil core. It sits
+          // at the top of the coloured face, so turned over it is at the bottom.
+          vec2 notch = vec2(0.5, lit > 0.5 ? 0.0 : 1.0);
+          if (distance(face, notch) < 0.14) discard;
 
           float veinPattern = 0.0;
-          float mainVein = smoothstep(0.05, 0.0, abs(gl_PointCoord.x - 0.5));
+          float mainVein = smoothstep(0.05, 0.0, abs(face.x - 0.5));
           for (int i = 1; i <= 3; i++) {
             float y = float(i) * 0.2;
-            float sideVein = smoothstep(0.03, 0.0, abs(gl_PointCoord.y - y)) *
-                             smoothstep(0.0, 0.5, gl_PointCoord.x);
+            float sideVein = smoothstep(0.03, 0.0, abs(face.y - y)) *
+                             smoothstep(0.0, 0.5, face.x);
             veinPattern += sideVein * 0.3;
           }
           veinPattern += mainVein * 0.5;
@@ -157,8 +179,9 @@ const FlipdotWebGL = ({ matrix }) => {
           vec3 onColor = vDotColor;
           onColor = onColor * (1.0 - veinPattern * 0.3);
 
-          vec3 color = mix(offColor, onColor, vFlip);
-          float brightness = 0.7 + 0.3 * animEffect;
+          vec3 color = mix(offColor, onColor, lit);
+          // A disc tilted away catches less light; face-on it sits at 0.7.
+          float brightness = 0.7 * (0.45 + 0.55 * squash);
 
           gl_FragColor = vec4(color * brightness, 1.0);
         }
@@ -181,7 +204,8 @@ const FlipdotWebGL = ({ matrix }) => {
       const now = performance.now();
       const updatedAt = updatedAtRef.current;
       for (let i = 0; i < COUNT; i++) {
-        progress[i] = Math.min((now - updatedAt[i]) / ANIMATION_DURATION, 1.0);
+        const t = (now - updatedAt[i] - sweepDelay[i]) / FLIP_MS;
+        progress[i] = t < 0 ? 0 : t > 1 ? 1 : t;
       }
       flipBuffer.subdata(flipRef.current);
       progressBuffer.subdata(progress);
