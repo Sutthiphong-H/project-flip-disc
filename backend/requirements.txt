@@ -1,0 +1,14 @@
+# The RTX 5060 is Blackwell (sm_120), which needs a CUDA 12.8 build of torch.
+# torch 2.6 tops out at cu126 and will fail with "no kernel image is available
+# for execution on the device". Install torch first, from the cu128 index:
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   pip install -r requirements.txt
+#
+torch>=2.7.0
+ultralytics
+opencv-python==4.11.0.86
+numpy==2.2.4
+flask==3.1.0
+flask-cors==5.0.1
+flask-socketio==5.5.1

@@ -1,0 +1,4 @@
+Model weights live here and are not committed (see .gitignore):
+
+  u2net_human_seg.pth   download link in the project README
+  yolo12n.pt            fetched automatically by ultralytics on first run
