@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { COLS, ROWS } from "./Flipdot";
 
 // The raw 80x45 matrix, one pixel per disc, scaled up without smoothing.
-const MaskView = ({ matrix }) => {
+const MaskView = ({ discs }) => {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -10,14 +10,14 @@ const MaskView = ({ matrix }) => {
     const image = ctx.createImageData(COLS, ROWS);
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
-        const v = matrix?.[r]?.[c] ? 255 : 0;
+        const v = discs?.[r * COLS + c] ? 255 : 0;
         const i = (r * COLS + c) * 4;
         image.data[i] = image.data[i + 1] = image.data[i + 2] = v;
         image.data[i + 3] = 255;
       }
     }
     ctx.putImageData(image, 0, 0);
-  }, [matrix]);
+  }, [discs]);
 
   return (
     <canvas

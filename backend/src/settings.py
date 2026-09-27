@@ -7,6 +7,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ASSETS_DIR = BASE_DIR / "assets"
 MODELS_DIR = BASE_DIR / "models"
 CACHE_DIR = BASE_DIR / ".cache"
+# `npm run build` output, served at / so the built frontend needs no Vite.
+FRONTEND_DIST = Path(os.environ.get("FLIPDISC_FRONTEND_DIST",
+                                    BASE_DIR.parent / "flip-disc_frontend" / "dist"))
 
 
 def _env_int(name, default):
@@ -23,7 +26,10 @@ def _env_size(name, default):
 
 
 # --- Camera -----------------------------------------------------------------
-CAMERA_INDEX = _env_int("FLIPDISC_CAMERA", 0)
+CAMERA_INDEX = _env_int("FLIPDISC_CAMERA", 0)  # the first webcam, until cameras.json exists
+# The cameras set up in the web UI (webcams and IP cameras) and which one is
+# active. Per machine and holds IP camera passwords, so it is not committed.
+CAMERAS_PATH = Path(os.environ.get("FLIPDISC_CAMERAS", BASE_DIR / "cameras.json"))
 CAMERA_FPS = _env_int("FLIPDISC_CAMERA_FPS", 30)
 
 # --- Resolutions ------------------------------------------------------------
@@ -41,9 +47,11 @@ RVM_DOWNSAMPLE = _env_float("FLIPDISC_RVM_DOWNSAMPLE", 0.5)
 # PROCESS_RESOLUTION is the model's input size. Defaults are what looked best on
 # this webcam: RVM at full camera size (downsampled internally, above); U2NET at
 # 512x288 -- at 640x360 it picks up specks (it was trained at 320).
-# 1280x720 input: this webcam switches to MJPEG there and delivers 20 fps,
-# against 15 fps of YUY2 at 640x360. Scaling it down for the model is ~1 ms.
-INPUT_RESOLUTION = (1280, 720)   # frames grabbed from the camera
+# Each camera has its own resolution (set in the web UI); this is the default
+# for the first webcam. 1280x720 because this webcam switches to MJPEG there and
+# delivers 20 fps, against 15 fps of YUY2 at 640x360. Scaling it down for the
+# model is ~1 ms.
+INPUT_RESOLUTION = (1280, 720)
 _DEFAULT_PROCESS_SIZE = {"rvm": "640x360", "u2net": "512x288"}
 PROCESS_RESOLUTION = _env_size("FLIPDISC_PROCESS_SIZE",
                                _DEFAULT_PROCESS_SIZE.get(SEGMENTATION_MODEL, "512x288"))

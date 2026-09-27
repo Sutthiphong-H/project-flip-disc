@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 .venv/
 backend/.cache/
+# The cameras set up in the web UI: per machine, holds IP camera passwords
+backend/cameras.json
+backend/cameras.tmp
 venv/
 
 # Model weights (downloaded separately, see README)

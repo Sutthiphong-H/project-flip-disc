@@ -43,12 +43,16 @@ for (let i = 0; i < COUNT; i++) {
   sweepDelay[i] = (col / (COLS - 1)) * SWEEP_MS;
 }
 
-const FlipdotWebGL = ({ matrix }) => {
+const FlipdotWebGL = ({ discs }) => {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const flipRef = useRef(null);
   const colorRef = useRef(null);
   const updatedAtRef = useRef(new Float64Array(COUNT));
+  // Redraw only while something is flipping or after a resize; otherwise the
+  // canvas already shows the right picture and a still scene costs nothing.
+  const animateUntilRef = useRef(0);
+  const dirtyRef = useRef(true);
 
   if (flipRef.current === null) {
     flipRef.current = new Float32Array(COUNT);
@@ -57,26 +61,27 @@ const FlipdotWebGL = ({ matrix }) => {
     for (let i = 0; i < COUNT; i++) colorRef.current.set(randomLeafColor(), i * 3);
   }
 
-  // A new frame from the backend: flipped discs restart their animation, and
-  // newly lit ones get a fresh colour. No frame means no connection -> noise.
+  // New discs from the backend: only the ones that changed flip over (and get a
+  // fresh colour if they turn on); the rest are left alone. No discs means no
+  // connection -> noise.
   useEffect(() => {
     const flips = flipRef.current;
-    if (!matrix) {
+    if (!discs) {
       randomFlips(flips);
+      dirtyRef.current = true;
       return;
     }
     const now = performance.now();
-    for (let r = 0; r < Math.min(ROWS, matrix.length); r++) {
-      const row = matrix[r];
-      for (let c = 0; c < Math.min(COLS, row.length); c++) {
-        const i = r * COLS + c;
-        if (row[c] === flips[i]) continue;
-        flips[i] = row[c];
-        updatedAtRef.current[i] = now;
-        if (row[c] === 1) colorRef.current.set(randomLeafColor(), i * 3);
-      }
+    let changed = false;
+    for (let i = 0; i < COUNT; i++) {
+      if (discs[i] === flips[i]) continue;
+      flips[i] = discs[i];
+      updatedAtRef.current[i] = now;
+      if (discs[i] === 1) colorRef.current.set(randomLeafColor(), i * 3);
+      changed = true;
     }
-  }, [matrix]);
+    if (changed) animateUntilRef.current = now + SWEEP_MS + FLIP_MS;
+  }, [discs]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -100,6 +105,7 @@ const FlipdotWebGL = ({ matrix }) => {
       const pitch = Math.min(canvas.width / COLS, canvas.height / ROWS);
       view.scale = [(pitch * COLS) / canvas.width, (pitch * ROWS) / canvas.height];
       view.pointSize = Math.min(pitch * DOT_SIZE, maxPointSize);
+      dirtyRef.current = true; // resizing clears the canvas
     };
     const observer = new ResizeObserver(resize);
     observer.observe(container);
@@ -200,8 +206,14 @@ const FlipdotWebGL = ({ matrix }) => {
       primitive: "points",
     });
 
+    let lastDraw = 0;
     const loop = regl.frame(() => {
       const now = performance.now();
+      // Nothing flipping since the last draw, nothing resized: skip the frame.
+      if (!dirtyRef.current && lastDraw > animateUntilRef.current) return;
+      dirtyRef.current = false;
+      lastDraw = now;
+
       const updatedAt = updatedAtRef.current;
       for (let i = 0; i < COUNT; i++) {
         const t = (now - updatedAt[i] - sweepDelay[i]) / FLIP_MS;

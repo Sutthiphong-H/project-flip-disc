@@ -5,20 +5,22 @@ Two modes:
     idle_video  nobody in range for IDLE_TIMEOUT_SECONDS; the idle clip loops instead
 
 Segmentation runs in both modes -- it is also what notices someone walking up.
+With no picture from the camera the idle clip keeps playing (the camera
+retries on its own thread) and the web UI can still switch to another one.
 """
 
+import threading
 import time
 
 import torch
 
 import settings
 from frame_rate import FrameRateMeter
+from sources.camera import Camera, first_frame
+from sources.camera_store import CameraStore, hard_signature
 from sources.idle_video import IdleVideo
-from sources.webcam import Webcam
 from vision.models import load_model
 from vision.segmenter import Segmenter
-
-MAX_READ_FAILURES = 30  # consecutive failed reads before reopening the camera
 
 
 def select_device():
@@ -30,7 +32,7 @@ def select_device():
 
 class FlipdiscPipeline:
     def __init__(self, publish):
-        """`publish` is called with the payload dict for every emitted frame."""
+        """`publish(discs, status, preview)` is called for every emitted frame."""
         self.publish = publish
         self.device, self.use_fp16 = select_device()
         self.fps_meter = FrameRateMeter()
@@ -38,10 +40,13 @@ class FlipdiscPipeline:
         self.mode = "idle_video"
         self.people = []
 
-        self.camera = None
+        self.cameras = CameraStore()  # the web UI edits it from the start
+        self.camera = None            # the running Camera, from setup() on
         self.segmenter = None
         self.idle_video = None
         self._running = False
+        self._next_emit = 0.0
+        self._switch_lock = threading.Lock()
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -57,43 +62,35 @@ class FlipdiscPipeline:
         self.segmenter = Segmenter(load_model(self.device, self.use_fp16)).start()
         self.idle_video = IdleVideo(settings.IDLE_VIDEO_PATH)
 
-        self.camera = Webcam()
-        opened = self.camera.open()
+        # A camera that won't open doesn't stop the pipeline: the loop plays the
+        # idle clip, the camera keeps retrying, and the web UI can pick another.
+        self.camera = Camera(self.cameras.active).start()
         self.segmenter.wait_ready()
-        return opened
 
     def teardown(self):
         if self.segmenter:
             self.segmenter.stop()
         if self.camera:
-            self.camera.release()
+            self.camera.stop()
+            print("Camera released")
 
     # -- main loop -----------------------------------------------------------
 
     def run(self):
-        if not self.setup():
-            return
-
+        self.setup()
         self._running = True
         last_person_seen = time.monotonic() - settings.IDLE_TIMEOUT_SECONDS
-        next_emit = 0.0
-        read_failures = 0
         mask, preview = None, None
 
         while self._running:
-            frame = self.camera.read()
-            if frame is None:
-                read_failures += 1
-                if read_failures >= MAX_READ_FAILURES:
-                    print("Camera stopped delivering frames, reopening...")
-                    self.camera.release()
-                    self.camera.open()
-                    read_failures = 0
-                time.sleep(0.01)
-                continue
-
-            read_failures = 0
+            # Wait no longer than one emit interval, so the idle clip keeps its
+            # pace when the camera is down.
+            frame = self.camera.read(timeout=settings.EMIT_INTERVAL)
             now = time.monotonic()
+            if frame is None:
+                if not self.camera.has_signal:
+                    self._without_camera(now, last_person_seen)
+                continue
 
             self.segmenter.submit(frame)
             result = self.segmenter.poll()
@@ -115,13 +112,8 @@ class FlipdiscPipeline:
                 # The camera preview stays live so the debug view shows who walks up.
                 mask = self.idle_video.next_mask()
 
-            if mask is not None and now >= next_emit:
-                # Step on a fixed grid rather than "interval since last emit":
-                # with the camera at the same rate as the cap, frames arriving
-                # a millisecond early would otherwise be dropped (30 -> 20 fps).
-                next_emit = max(next_emit + settings.EMIT_INTERVAL, now - settings.EMIT_INTERVAL)
-                self.fps_meter.tick(now)
-                self._emit(mask, preview, idle_for)
+            if mask is not None and self._emit_due(now):
+                self._emit(mask, preview, idle_for, now)
                 mask, preview = None, None  # never re-send a stale frame
 
         self.teardown()
@@ -129,7 +121,56 @@ class FlipdiscPipeline:
     def stop(self):
         self._running = False
 
+    # -- camera --------------------------------------------------------------
+
+    def switch_camera(self, cam):
+        """Run a (possibly edited) camera entry, from a web request thread.
+
+        A new source starts next to the old one and replaces it only once a
+        frame comes through, so the display doesn't stall and a camera that
+        doesn't work leaves the current one running. If only the name changed
+        nothing restarts. Returns (ok, error or None).
+        """
+        with self._switch_lock:
+            old = self.camera
+            if hard_signature(cam) == hard_signature(old.cam):
+                old.cam, old.label = cam, cam["name"]
+                return True, None
+            if cam["type"] == "webcam" and old.cam["type"] == "webcam" and cam["index"] == old.cam["index"]:
+                old.stop()  # same device, new resolution: it can't be open twice
+                new = Camera(cam).start()
+                if first_frame(new) is None:
+                    new.stop()
+                    self.camera = Camera(old.cam).start()
+                    return False, f"'{cam['name']}' sent no picture at that resolution; kept the old settings"
+            else:
+                new = Camera(cam).start()
+                if first_frame(new) is None:
+                    new.stop()
+                    return False, f"'{cam['name']}' sent no picture; still using '{old.label}'"
+                old.stop()  # frees the device for anyone else
+            self.camera = new
+            print(f"Switched camera: '{old.label}' -> '{new.label}'")
+            return True, None
+
+    def _without_camera(self, now, last_person_seen):
+        """No picture: keep the idle clip playing on the display."""
+        self.people = []
+        self.mode = "idle_video"
+        if self._emit_due(now):
+            self._emit(self.idle_video.next_mask(), None, now - last_person_seen, now)
+
     # -- steps ---------------------------------------------------------------
+
+    def _emit_due(self, now):
+        if now < self._next_emit:
+            return False
+        # Step on a fixed grid rather than "interval since last emit": with the
+        # camera at the same rate as the cap, frames arriving a millisecond
+        # early would otherwise be dropped (30 -> 20 fps).
+        self._next_emit = max(self._next_emit + settings.EMIT_INTERVAL,
+                              now - settings.EMIT_INTERVAL)
+        return True
 
     def _anyone_in_range(self):
         return any(p.distance_m <= settings.MAX_PERSON_DISTANCE_M for p in self.people)
@@ -137,13 +178,14 @@ class FlipdiscPipeline:
     def _nearest_m(self):
         return min((p.distance_m for p in self.people), default=None)
 
-    def _emit(self, mask, preview, idle_for):
+    def _emit(self, mask, preview, idle_for, now):
+        self.fps_meter.tick(now)
         nearest = self._nearest_m()
-        self.publish({
-            "matrix": (mask > 0).astype(int).tolist(),
+        self.publish(mask > 0, {
             "mode": self.mode,
             "fps": self.fps_meter.get_fps(),
             "people": len(self.people),
             "nearest_m": None if nearest is None else round(float(nearest), 2),
             "time_since_person": round(idle_for, 1),
+            "camera_ok": self.camera.has_signal,
         }, preview)
