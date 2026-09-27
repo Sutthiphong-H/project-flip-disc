@@ -41,7 +41,9 @@ RVM_DOWNSAMPLE = _env_float("FLIPDISC_RVM_DOWNSAMPLE", 0.5)
 # PROCESS_RESOLUTION is the model's input size. Defaults are what looked best on
 # this webcam: RVM at full camera size (downsampled internally, above); U2NET at
 # 512x288 -- at 640x360 it picks up specks (it was trained at 320).
-INPUT_RESOLUTION = (640, 360)    # frames grabbed from the camera
+# 1280x720 input: this webcam switches to MJPEG there and delivers 20 fps,
+# against 15 fps of YUY2 at 640x360. Scaling it down for the model is ~1 ms.
+INPUT_RESOLUTION = (1280, 720)   # frames grabbed from the camera
 _DEFAULT_PROCESS_SIZE = {"rvm": "640x360", "u2net": "512x288"}
 PROCESS_RESOLUTION = _env_size("FLIPDISC_PROCESS_SIZE",
                                _DEFAULT_PROCESS_SIZE.get(SEGMENTATION_MODEL, "512x288"))
@@ -64,12 +66,15 @@ IDLE_TIMEOUT_SECONDS = _env_float("FLIPDISC_IDLE_TIMEOUT", 15.0)
 
 # Each silhouette's distance is estimated from its height:
 #     distance = REAL_PERSON_HEIGHT_M * FOCAL_LENGTH_PIXELS / height_px
-# FOCAL_LENGTH_PIXELS is in camera (INPUT_RESOLUTION) pixels. The default assumes a
+# FOCAL_LENGTH_PIXELS is in pixels of a 360-px-tall frame, whatever the actual
+# input and model resolutions are (the h=...px in the Camera view uses the same
+# pixels), so changing resolution doesn't change the distances. The default assumes a
 # ~70 degree webcam and is NOT calibrated -- stand a person of known height at
 # a known distance, read their h=...px from the Camera view in the web UI, and set
 # focal = height_px * distance / real_height. Only accurate when the whole
 # body is in frame; someone cut off at the edge reads as further away.
 FOCAL_LENGTH_PIXELS = _env_float("FLIPDISC_FOCAL_LENGTH", 460.0)
+FOCAL_REFERENCE_HEIGHT = 360
 REAL_PERSON_HEIGHT_M = 1.7
 
 # --- Idle video -------------------------------------------------------------

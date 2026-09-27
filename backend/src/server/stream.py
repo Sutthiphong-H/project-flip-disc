@@ -28,6 +28,7 @@ class SocketPublisher:
         self._preview_seq = 0
 
     def __call__(self, payload, preview=None):
+        """`preview` is a zero-argument callable returning the BGR debug frame."""
         with self._cond:
             self._latest = payload
             if preview is not None:
@@ -57,8 +58,9 @@ class SocketPublisher:
             with self._cond:
                 if not self._cond.wait_for(lambda: self._preview_seq != seen, timeout=1.0):
                     continue
-                seen, frame = self._preview_seq, self._preview
+                seen, render = self._preview_seq, self._preview
 
+            frame = render()
             ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             if ok:
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"

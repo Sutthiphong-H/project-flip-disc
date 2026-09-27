@@ -1,6 +1,7 @@
 """Silhouette segmentation on a worker thread, split into people by distance."""
 
 from collections import namedtuple
+from functools import partial
 from queue import Empty, Queue
 from threading import Event, Thread
 
@@ -14,7 +15,7 @@ from settings import (
     DISC_SMOOTHING,
     FLIPDISC_RESOLUTION,
     FOCAL_LENGTH_PIXELS,
-    INPUT_RESOLUTION,
+    FOCAL_REFERENCE_HEIGHT,
     MASK_THRESHOLD,
     MAX_PERSON_DISTANCE_M,
     MIN_PERSON_AREA,
@@ -25,9 +26,10 @@ from settings import (
 #: One silhouette, in PROCESS_RESOLUTION pixels.
 Person = namedtuple("Person", "x y w h distance_m")
 
-#: `people` is everyone found, in range or not. `preview` is the camera frame
-#: with everything outside the kept mask dimmed and a box per person, for the
-#: web debug view.
+#: `people` is everyone found, in range or not. `preview` is a zero-argument
+#: callable that renders the camera frame with everything outside the kept mask
+#: dimmed and a box per person -- only called while someone watches the web
+#: debug view.
 SegmentResult = namedtuple("SegmentResult", "flipdisc_mask people preview")
 
 
@@ -35,14 +37,14 @@ def split_people(mask):
     """Return (mask keeping only people within MAX_PERSON_DISTANCE_M, all people)."""
     count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     min_area = MIN_PERSON_AREA * mask.size
-    to_camera_px = INPUT_RESOLUTION[1] / mask.shape[0]  # focal length is in camera pixels
+    to_focal_px = FOCAL_REFERENCE_HEIGHT / mask.shape[0]
     kept = np.zeros_like(mask)
     people = []
     for i in range(1, count):  # 0 is the background
         x, y, w, h, area = stats[i]
         if area < min_area:
             continue
-        distance = REAL_PERSON_HEIGHT_M * FOCAL_LENGTH_PIXELS / (h * to_camera_px)
+        distance = REAL_PERSON_HEIGHT_M * FOCAL_LENGTH_PIXELS / (h * to_focal_px)
         person = Person(x, y, w, h, distance)
         people.append(person)
         if person.distance_m <= MAX_PERSON_DISTANCE_M:
@@ -126,7 +128,7 @@ class Segmenter:
         mask = (prob > MASK_THRESHOLD).to(torch.uint8).mul_(255).cpu().numpy()
         mask, people = split_people(mask)
 
-        return SegmentResult(self._to_discs(mask), people, self._preview(frame, mask, people))
+        return SegmentResult(self._to_discs(mask), people, partial(self._preview, frame, mask, people))
 
     def _to_discs(self, mask):
         """Downscale to the display without discs on the silhouette edge flickering.
@@ -143,13 +145,17 @@ class Segmenter:
     @staticmethod
     def _preview(frame, mask, people):
         full = cv2.resize(mask, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_NEAREST)
-        preview = frame.copy()
-        preview[full == 0] //= 3  # keep the scene visible, just darker
+        # The scene dimmed, the silhouette at full brightness. (cv2 rather than
+        # numpy boolean indexing: 1 ms instead of 23 ms at 1280x720.)
+        preview = cv2.convertScaleAbs(frame, alpha=1 / 3)
+        cv2.copyTo(frame, full, preview)
         scale = frame.shape[1] / PROCESS_RESOLUTION[0]
+        to_focal_px = FOCAL_REFERENCE_HEIGHT / mask.shape[0]
         for p in people:
             colour = (0, 255, 0) if p.distance_m <= MAX_PERSON_DISTANCE_M else (0, 0, 255)
             x, y, w, h = (int(v * scale) for v in (p.x, p.y, p.w, p.h))
             cv2.rectangle(preview, (x, y), (x + w, y + h), colour, 1)
-            cv2.putText(preview, f"{p.distance_m:.1f}m h={h}px", (x, max(y - 8, 12)),
+            # h in the same pixels FOCAL_LENGTH_PIXELS uses, for calibrating it
+            cv2.putText(preview, f"{p.distance_m:.1f}m h={int(p.h * to_focal_px)}px", (x, max(y - 8, 12)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1)
         return preview
