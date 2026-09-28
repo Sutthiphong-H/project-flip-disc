@@ -174,7 +174,7 @@ const FlipdotWebGL = ({ discs }) => {
         const float BOUNCE = 0.8;       // radians the disc springs back off its stop
         const float EDGE = 0.08;        // its thickness, seen edge-on
         const float PERSPECTIVE = 0.35;
-        const vec3 LIGHT = vec3(0.0, 0.6, 0.8); // from above and in front
+        const vec3 LIGHT = vec3(-0.45, 0.35, 0.82); // from the upper left, in front
 
         // How far the disc has turned over, 0..PI.
         float flipAngle(float t) {
@@ -187,38 +187,48 @@ const FlipdotWebGL = ({ discs }) => {
         }
 
         void main() {
-          // The disc turns over about its horizontal axis: at 0 the face it is
-          // leaving is up, at PI the new one. Seen from the front it flattens
-          // to an edge and opens out again.
-          float angle = flipAngle(vAnimationProgress);
+          // The disc swings about its vertical axle between two stops: black
+          // face forward at 0, coloured face at PI. It turns on 0 -> PI and
+          // back off PI -> 0, never on round in the same direction.
+          float turned = flipAngle(vAnimationProgress);
+          float angle = vFlip > 0.5 ? turned : PI - turned;
           float c = cos(angle);
           float s = sin(angle);
+          // Screen to the disc's own coordinates. Dividing by the signed cos
+          // mirrors them once the back is showing, as turning a real disc does.
           vec2 centered = gl_PointCoord - vec2(0.5);
-          centered.y /= max(abs(c), EDGE);
-          // The half tipping towards the viewer is nearer, so wider.
-          centered.x *= 1.0 + PERSPECTIVE * s * centered.y;
+          centered.x /= (c < 0.0 ? -1.0 : 1.0) * max(abs(c), EDGE);
+          // The side swinging towards the viewer is nearer, so taller.
+          centered.y *= 1.0 + PERSPECTIVE * s * centered.x;
           if (length(centered) > 0.5) discard;
           vec2 face = centered + vec2(0.5); // the pattern squashes with the disc
 
-          // Until it is edge-on, the disc still shows the face it is leaving.
-          float lit = angle < PI * 0.5 ? 1.0 - vFlip : vFlip;
+          // Which face is towards the viewer.
+          float lit = c < 0.0 ? 1.0 : 0.0;
 
-          // Real discs have a round notch in the edge for the coil core. It sits
-          // at the top of the coloured face, so turned over it is at the bottom.
-          vec2 notch = vec2(0.5, lit > 0.5 ? 0.0 : 1.0);
+          // Real discs have a round notch in the edge for the coil core, cut
+          // right through the disc: on the right of the coloured face, so on
+          // the left of the black one.
+          vec2 notch = vec2(0.0, 0.5);
           if (distance(face, notch) < 0.14) discard;
 
           float veinPattern = 0.0;
           float mainVein = smoothstep(0.05, 0.0, abs(face.x - 0.5));
           for (int i = 1; i <= 3; i++) {
             float y = float(i) * 0.2;
+            // 1 - x: the coloured face is seen from the disc's back.
             float sideVein = smoothstep(0.03, 0.0, abs(face.y - y)) *
-                             smoothstep(0.0, 0.5, face.x);
+                             smoothstep(0.0, 0.5, 1.0 - face.x);
             veinPattern += sideVein * 0.3;
           }
           veinPattern += mainVein * 0.5;
 
-          vec3 offColor = vec3(0.1, 0.1, 0.1);
+          // The black face is matte, a shade lighter than the board (0.1) so it
+          // reads as a disc sitting on it: lit a little from above, and darker
+          // round its edge where it curves away -- darker there than the board.
+          float sheen = 1.0 + 0.3 * (0.5 - face.y);
+          float rim = 1.0 - 0.45 * smoothstep(0.34, 0.5, length(centered));
+          vec3 offColor = vec3(0.2) * sheen * rim;
           vec3 onColor = vDotColor;
           onColor = onColor * (1.0 - veinPattern * 0.3);
 
@@ -226,9 +236,9 @@ const FlipdotWebGL = ({ discs }) => {
           // Edge-on, what shows is the disc's rim.
           color = mix(color, vec3(0.35), smoothstep(2.0 * EDGE, EDGE, abs(c)));
 
-          // Lit from above: tipping up catches more light, tipping down less.
-          // Face-on it sits at 0.7, as before.
-          vec3 normal = vec3(0.0, -s, c) * sign(c);
+          // Lit from the upper left: turning towards the light catches more of
+          // it, turning away less. Face-on it sits at 0.7, as before.
+          vec3 normal = vec3(-s, 0.0, c) * sign(c);
           float light = max(dot(normal, normalize(LIGHT)), 0.0) / normalize(LIGHT).z;
           float brightness = 0.7 * (0.45 + 0.55 * light);
 
