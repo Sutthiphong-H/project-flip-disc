@@ -4,7 +4,14 @@ import createREGL from "regl";
 export const ROWS = 45;
 export const COLS = 80;
 const COUNT = ROWS * COLS;
-const FLIP_MS = 80; // one disc turning over, bounce included
+// One flip as a coil drives it: the disc starts slowly and speeds up until it
+// hits its stop (TURN_MS), then bounces back twice, less each time (SETTLE_MS).
+// The turn has to span several screen frames to read as a turn at all -- 90 ms
+// is ~5 at 60 Hz. (An 80 ms ease-out turned it in ~24 ms: a blink, not a flip.)
+const TURN_MS = 90;
+const SETTLE_MS = 70;
+const FLIP_MS = TURN_MS + SETTLE_MS;
+const TURN_SHARE = TURN_MS / FLIP_MS;
 const SWEEP_MS = 40; // a real controller drives column by column: left edge flips first
 const DOT_SIZE = 0.92; // disc diameter as a fraction of the grid pitch
 
@@ -75,11 +82,16 @@ const FlipdotWebGL = ({ discs }) => {
       return;
     }
     const now = performance.now();
+    const updatedAt = updatedAtRef.current;
     let changed = false;
     for (let i = 0; i < COUNT; i++) {
       if (discs[i] === flips[i]) continue;
       flips[i] = discs[i];
-      updatedAtRef.current[i] = now;
+      // Sent back before it got over: turn back from where it is (the same
+      // angle, mirrored) instead of snapping to its starting face. The turn
+      // goes as u^2, so the mirrored point is sqrt(1 - u^2).
+      const u = (now - updatedAt[i] - sweepDelay[i]) / TURN_MS;
+      updatedAt[i] = u > 0 && u < 1 ? now - sweepDelay[i] - Math.sqrt(1 - u * u) * TURN_MS : now;
       if (discs[i] === 1) colorRef.current.set(randomLeafColor(), i * 3);
       changed = true;
     }
@@ -158,22 +170,33 @@ const FlipdotWebGL = ({ discs }) => {
         varying vec3 vDotColor;
 
         const float PI = 3.14159265;
+        const float TURN = ${TURN_SHARE.toFixed(4)};
+        const float BOUNCE = 0.8;       // radians the disc springs back off its stop
+        const float EDGE = 0.08;        // its thickness, seen edge-on
+        const float PERSPECTIVE = 0.35;
+        const vec3 LIGHT = vec3(0.0, 0.6, 0.8); // from above and in front
 
-        // Overshoots ~10% past 1 and settles: the disc bouncing off its stop.
-        float easeOutBack(float t) {
-          float u = t - 1.0;
-          return 1.0 + 2.70158 * u * u * u + 1.70158 * u * u;
+        // How far the disc has turned over, 0..PI.
+        float flipAngle(float t) {
+          if (t < TURN) {
+            float u = t / TURN;
+            return PI * u * u;  // pulled over faster and faster
+          }
+          float u = (t - TURN) / (1.0 - TURN);
+          return PI - BOUNCE * abs(sin(2.0 * PI * u)) * (1.0 - u);  // two bounces, dying away
         }
 
         void main() {
           // The disc turns over about its horizontal axis: at 0 the face it is
           // leaving is up, at PI the new one. Seen from the front it flattens
           // to an edge and opens out again.
-          float angle = PI * easeOutBack(vAnimationProgress);
-          float squash = abs(cos(angle));
+          float angle = flipAngle(vAnimationProgress);
+          float c = cos(angle);
+          float s = sin(angle);
           vec2 centered = gl_PointCoord - vec2(0.5);
-          if (squash < 0.02) discard;
-          centered.y /= squash;
+          centered.y /= max(abs(c), EDGE);
+          // The half tipping towards the viewer is nearer, so wider.
+          centered.x *= 1.0 + PERSPECTIVE * s * centered.y;
           if (length(centered) > 0.5) discard;
           vec2 face = centered + vec2(0.5); // the pattern squashes with the disc
 
@@ -200,8 +223,14 @@ const FlipdotWebGL = ({ discs }) => {
           onColor = onColor * (1.0 - veinPattern * 0.3);
 
           vec3 color = mix(offColor, onColor, lit);
-          // A disc tilted away catches less light; face-on it sits at 0.7.
-          float brightness = 0.7 * (0.45 + 0.55 * squash);
+          // Edge-on, what shows is the disc's rim.
+          color = mix(color, vec3(0.35), smoothstep(2.0 * EDGE, EDGE, abs(c)));
+
+          // Lit from above: tipping up catches more light, tipping down less.
+          // Face-on it sits at 0.7, as before.
+          vec3 normal = vec3(0.0, -s, c) * sign(c);
+          float light = max(dot(normal, normalize(LIGHT)), 0.0) / normalize(LIGHT).z;
+          float brightness = 0.7 * (0.45 + 0.55 * light);
 
           gl_FragColor = vec4(color * brightness, 1.0);
         }
