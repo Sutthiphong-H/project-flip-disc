@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../backend";
+import Icon from "./Icon";
 
 // The camera manager: pick the active camera, and add, edit or delete saved
 // ones (webcams and IP cameras). The backend keeps the list in cameras.json,
@@ -340,9 +341,7 @@ const CameraDialog = ({ onClose }) => {
             {mode === "list" ? "Cameras" : mode === "add" ? "Add camera" : `Edit '${mode.name}'`}
           </h2>
           <button onClick={onClose} aria-label="Close" className="rounded p-1 text-neutral-400 hover:text-white">
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
+            <Icon name="close" />
           </button>
         </div>
 

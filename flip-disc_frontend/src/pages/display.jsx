@@ -3,6 +3,7 @@ import { io } from "socket.io-client";
 import { BACKEND_URL } from "../backend";
 import CameraDialog from "../components/CameraDialog";
 import FlipdotWebGL from "../components/Flipdot";
+import Icon from "../components/Icon";
 import MaskView from "../components/MaskView";
 
 // The backend sends a frame in every mode, idle and camera-less included, so
@@ -15,12 +16,6 @@ const VIEWS = [
   { id: "mask", label: "Mask" },
   { id: "camera", label: "Camera" },
 ];
-
-const ICON_PATHS = {
-  camera: "M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3zM15 13a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
-  enter: "M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3",
-  exit: "M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3",
-};
 
 // Fullscreen for whichever view is showing. In fullscreen the button and the
 // cursor hide after a couple of seconds without mouse movement.
@@ -83,34 +78,22 @@ const applyUpdate = (prev, msg) => {
   return { ...status, discs: next };
 };
 
-// Centred over the display so a lost connection can't go unnoticed.
-const DisconnectedNotice = ({ attempt }) => (
-  <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
-    <div className="max-w-sm rounded-xl border border-red-500/40 bg-neutral-900/90 px-6 py-5 text-center shadow-2xl backdrop-blur">
-      <div className="mb-2 flex items-center justify-center gap-2 text-base font-medium text-red-400">
-        <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
-        Disconnected
-      </div>
-      <p className="text-neutral-300">
-        Lost the connection to the backend at <span className="font-mono">{BACKEND_URL}</span>.
-      </p>
-      <p className="mt-1 text-neutral-500">
-        Reconnecting automatically{attempt > 0 && ` (attempt ${attempt})`}…
-      </p>
-    </div>
-  </div>
-);
+// Whole class names, not `border-${colour}-500`: Tailwind only generates the
+// classes it finds written out in the source.
+const TONES = {
+  red: { border: "border-red-500/40", text: "text-red-400", dot: "bg-red-500" },
+  amber: { border: "border-amber-500/40", text: "text-amber-400", dot: "bg-amber-400" },
+};
 
-// Centred too: the display is frozen meanwhile.
-const StalledNotice = () => (
+// A problem that stops the display, centred over it so it can't go unnoticed.
+const Notice = ({ tone, title, children }) => (
   <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
-    <div className="max-w-sm rounded-xl border border-amber-500/40 bg-neutral-900/90 px-6 py-5 text-center shadow-2xl backdrop-blur">
-      <div className="mb-2 flex items-center justify-center gap-2 text-base font-medium text-amber-400">
-        <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-amber-400" />
-        No frames from the backend
+    <div className={`max-w-sm rounded-xl border ${TONES[tone].border} bg-neutral-900/90 px-6 py-5 text-center shadow-2xl backdrop-blur`}>
+      <div className={`mb-2 flex items-center justify-center gap-2 text-base font-medium ${TONES[tone].text}`}>
+        <span className={`h-2.5 w-2.5 animate-pulse rounded-full ${TONES[tone].dot}`} />
+        {title}
       </div>
-      <p className="text-neutral-300">Connected, but the picture has stopped.</p>
-      <p className="mt-1 text-neutral-500">The backend restarts itself if it stays stuck…</p>
+      {children}
     </div>
   </div>
 );
@@ -119,9 +102,9 @@ const StalledNotice = () => (
 const NoCameraBadge = () => (
   <div
     title="The backend keeps retrying. Pick another camera with the camera button."
-    className="absolute left-4 top-4 flex items-center gap-2 rounded-full border border-amber-500/40 bg-neutral-900/80 px-3 py-1 text-amber-400 backdrop-blur"
+    className={`absolute left-4 top-4 flex items-center gap-2 rounded-full border ${TONES.amber.border} bg-neutral-900/80 px-3 py-1 ${TONES.amber.text} backdrop-blur`}
   >
-    <span className="h-2 w-2 animate-pulse rounded-full bg-amber-400" />
+    <span className={`h-2 w-2 animate-pulse rounded-full ${TONES.amber.dot}`} />
     No camera signal
   </div>
 );
@@ -192,7 +175,7 @@ const Display = () => {
   }, []);
 
   return (
-    <div className="flex h-dvh flex-col bg-[#1a1a1a] text-sm text-neutral-300">
+    <div className="flex h-dvh flex-col bg-page text-sm text-neutral-300">
       <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
         <nav className="flex rounded-lg bg-neutral-800 p-1">
           {VIEWS.map(({ id, label }) => (
@@ -215,17 +198,14 @@ const Display = () => {
             aria-label="Choose camera"
             className="rounded-lg bg-neutral-800 p-1.5 text-neutral-300 transition-colors hover:bg-neutral-700 hover:text-white"
           >
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor"
-                 strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d={ICON_PATHS.camera} />
-            </svg>
+            <Icon name="camera" />
           </button>
         </div>
       </header>
 
       <main
         ref={mainRef}
-        className={`relative min-h-0 flex-1 bg-[#1a1a1a] ${isFullscreen ? "" : "p-2"} ${
+        className={`relative min-h-0 flex-1 bg-page ${isFullscreen ? "" : "p-2"} ${
           controlsVisible ? "" : "cursor-none"
         }`}
       >
@@ -240,8 +220,23 @@ const Display = () => {
             className="block h-full w-full object-contain"
           />
         )}
-        {lost && <DisconnectedNotice attempt={attempt} />}
-        {!lost && stalled && <StalledNotice />}
+        {lost && (
+          <Notice tone="red" title="Disconnected">
+            <p className="text-neutral-300">
+              Lost the connection to the backend at <span className="font-mono">{BACKEND_URL}</span>.
+            </p>
+            <p className="mt-1 text-neutral-500">
+              Reconnecting automatically{attempt > 0 && ` (attempt ${attempt})`}…
+            </p>
+          </Notice>
+        )}
+        {/* Connected, but the display is frozen. */}
+        {!lost && stalled && (
+          <Notice tone="amber" title="No frames from the backend">
+            <p className="text-neutral-300">Connected, but the picture has stopped.</p>
+            <p className="mt-1 text-neutral-500">The backend restarts itself if it stays stuck…</p>
+          </Notice>
+        )}
         {!lost && !stalled && frame?.camera_ok === false && <NoCameraBadge />}
         {document.fullscreenEnabled && (
           <button
@@ -252,10 +247,7 @@ const Display = () => {
               controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
             }`}
           >
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor"
-                 strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d={ICON_PATHS[isFullscreen ? "exit" : "enter"]} />
-            </svg>
+            <Icon name={isFullscreen ? "exit" : "enter"} />
           </button>
         )}
       </main>

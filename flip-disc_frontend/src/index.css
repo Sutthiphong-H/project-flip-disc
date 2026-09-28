@@ -2,9 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  overflow: hidden;
+@layer base {
+  /* One screen, nothing scrolls: the views size themselves to it. (Preflight
+     already zeroes the body margin.) */
+  html,
+  body {
+    @apply h-full overflow-hidden;
+  }
 }
