@@ -22,3 +22,10 @@ backend/assets/*.mp4
 
 # Keep the models dir, not the weights
 !backend/models/.gitkeep
+
+# KiCad: per-user view state, caches, locks, local history and autosave backups
+*.kicad_prl
+fp-info-cache
+*.lck
+.history/
+*-backups/
