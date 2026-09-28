@@ -5,6 +5,11 @@ import CameraDialog from "../components/CameraDialog";
 import FlipdotWebGL from "../components/Flipdot";
 import MaskView from "../components/MaskView";
 
+// The backend sends a frame in every mode, idle and camera-less included, so
+// this long without one while connected means its pipeline is stuck. (Its
+// watchdog restarts it after FLIPDISC_STALL_SECONDS, 10 s by default.)
+const STALL_MS = 3000;
+
 const VIEWS = [
   { id: "flipdot", label: "Flip-disc" },
   { id: "mask", label: "Mask" },
@@ -96,6 +101,20 @@ const DisconnectedNotice = ({ attempt }) => (
   </div>
 );
 
+// Centred too: the display is frozen meanwhile.
+const StalledNotice = () => (
+  <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+    <div className="max-w-sm rounded-xl border border-amber-500/40 bg-neutral-900/90 px-6 py-5 text-center shadow-2xl backdrop-blur">
+      <div className="mb-2 flex items-center justify-center gap-2 text-base font-medium text-amber-400">
+        <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-amber-400" />
+        No frames from the backend
+      </div>
+      <p className="text-neutral-300">Connected, but the picture has stopped.</p>
+      <p className="mt-1 text-neutral-500">The backend restarts itself if it stays stuck…</p>
+    </div>
+  </div>
+);
+
 // Top-left, out of the way: the idle clip is still worth watching meanwhile.
 const NoCameraBadge = () => (
   <div
@@ -130,6 +149,7 @@ const Display = () => {
   const [attempt, setAttempt] = useState(0);
   const [session, setSession] = useState(0); // bumps on every (re)connect
   const [frame, setFrame] = useState(null);
+  const [stalled, setStalled] = useState(false);
   const [cameraDialog, setCameraDialog] = useState(false);
   // Stable, or the dialog's effect (fetch + Esc handler) re-runs on every frame.
   const closeCameraDialog = useCallback(() => setCameraDialog(false), []);
@@ -144,15 +164,27 @@ const Display = () => {
       setAttempt(0);
       setSession((n) => n + 1);
     });
+    // When the last frame came; null until the first one of this connection.
+    let lastUpdate = null;
     socket.on("disconnect", () => {
       setConnected(false);
       setLost(true);
       setFrame(null);
+      lastUpdate = null;
     });
     socket.on("connect_error", () => setLost(true));
     socket.io.on("reconnect_attempt", setAttempt);
-    socket.on("flipdisc_update", (msg) => setFrame((prev) => applyUpdate(prev, msg)));
-    return () => socket.disconnect();
+    socket.on("flipdisc_update", (msg) => {
+      lastUpdate = performance.now();
+      setFrame((prev) => applyUpdate(prev, msg));
+    });
+    const stallCheck = setInterval(() => {
+      setStalled(lastUpdate !== null && performance.now() - lastUpdate > STALL_MS);
+    }, 1000);
+    return () => {
+      clearInterval(stallCheck);
+      socket.disconnect();
+    };
   }, []);
 
   return (
@@ -205,7 +237,8 @@ const Display = () => {
           />
         )}
         {lost && <DisconnectedNotice attempt={attempt} />}
-        {!lost && frame?.camera_ok === false && <NoCameraBadge />}
+        {!lost && stalled && <StalledNotice />}
+        {!lost && !stalled && frame?.camera_ok === false && <NoCameraBadge />}
         {document.fullscreenEnabled && (
           <button
             onClick={toggle}

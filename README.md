@@ -73,6 +73,29 @@ cd flip-disc_frontend
 npm run dev
 ```
 
+### Running unattended
+
+`backend/run-backend.bat` runs the backend and restarts it whenever it exits with an
+error. The backend exits with code 1 by itself when something breaks and won't
+recover in place: the pipeline thread dies (a model that won't load, a CUDA context
+broken by a GPU driver reset), segmentation hangs, or no frame goes out for
+`FLIPDISC_STALL_SECONDS`. Frames go out in every mode (the idle clip plays even
+without a camera), so a gap in them always means the backend is stuck. Ctrl+C exits with 0 and ends
+the script too.
+
+To start it with Windows, create a Task Scheduler task with the trigger **At log on**
+and the action `backend\run-backend.bat`. Use log on rather than a Windows service:
+services run outside the desktop session, and webcam access from there is unreliable. On the display machine, also turn off
+sleep and USB selective suspend (Power Options → USB settings), or the webcam
+can be powered down.
+
+- `GET /status` returns 503 with `"status": "stalled"` once frames stop, for an
+  external health check. Before the first frame the status is `"starting"`.
+- The page shows *No frames from the backend* when it is connected but nothing has
+  arrived for 3 s, and *Disconnected* once the backend has exited.
+- If WebGL loses its context (a GPU reset, a driver update), the flip-disc view
+  rebuilds itself. You don't need to reload.
+
 Cameras are managed from the camera icon at the top right of the page: pick the
 camera in use from the dropdown, and add, edit or delete cameras.
 
@@ -107,3 +130,5 @@ distance box per person, streamed from `/debug.mjpg` only while it's open).
 | `FLIPDISC_SMOOTHING`       | `0.5`        | Anti-flicker; 1 = off, lower = steadier  |
 | `FLIPDISC_IDLE_TIMEOUT`    | `15`         | Seconds without a person before idle     |
 | `FLIPDISC_IDLE_VIDEO`      | `video.mp4`  | Clip in `backend/assets/` to loop        |
+| `FLIPDISC_STALL_SECONDS`   | `10`         | No frame this long: exit for a restart   |
+| `FLIPDISC_STARTUP_SECONDS` | `120`        | No first frame this long: same           |

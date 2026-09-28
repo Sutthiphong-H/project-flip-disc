@@ -93,3 +93,11 @@ IDLE_VIDEO_THRESHOLD = _env_int("FLIPDISC_IDLE_THRESHOLD", 75)
 HOST = os.environ.get("FLIPDISC_HOST", "0.0.0.0")
 PORT = _env_int("FLIPDISC_PORT", 5000)
 EMIT_INTERVAL = 1.0 / _env_float("FLIPDISC_EMIT_FPS", 30.0)
+
+# --- Watchdog ---------------------------------------------------------------
+# Frames go out in every mode (the idle clip plays even without a camera), so
+# none for STALL_SECONDS means the pipeline is stuck or dead. The backend then
+# exits with code 1 and run-backend.bat starts it again. STARTUP_SECONDS allows
+# for the first start, which decodes the idle clip and loads the model.
+STALL_SECONDS = _env_float("FLIPDISC_STALL_SECONDS", 10.0)
+STARTUP_SECONDS = _env_float("FLIPDISC_STARTUP_SECONDS", 120.0)

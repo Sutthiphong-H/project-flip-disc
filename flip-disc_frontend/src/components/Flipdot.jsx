@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import createREGL from "regl";
 
 export const ROWS = 45;
@@ -53,6 +53,9 @@ const FlipdotWebGL = ({ discs }) => {
   // canvas already shows the right picture and a still scene costs nothing.
   const animateUntilRef = useRef(0);
   const dirtyRef = useRef(true);
+  // Bumped to build the renderer again: after the GPU was reset under it (a
+  // driver update, sleep), or when WebGL wasn't available yet.
+  const [glEpoch, setGlEpoch] = useState(0);
 
   if (flipRef.current === null) {
     flipRef.current = new Float32Array(COUNT);
@@ -90,9 +93,20 @@ const FlipdotWebGL = ({ discs }) => {
     try {
       regl = createREGL({ canvas });
     } catch (error) {
-      console.error("Error initializing WebGL:", error);
-      return;
+      console.error("Error initializing WebGL, retrying:", error);
+      const retry = setTimeout(() => setGlEpoch((n) => n + 1), 2000);
+      return () => clearTimeout(retry);
     }
+    // regl asks for a lost context back and restores its buffers, but the
+    // restored canvas is blank and only redrawn when discs change -- on a
+    // still scene, never. Starting over is the dependable way back.
+    regl.on("restore", () => setGlEpoch((n) => n + 1));
+    // regl's frame loop keeps running while the context is lost (its stopRAF
+    // doesn't cancel), and drawing then throws "(regl) context lost".
+    let lost = false;
+    regl.on("lost", () => {
+      lost = true;
+    });
 
     // Letterbox the grid and size the discs in device pixels. Recomputed on
     // every container resize, so the dots never stretch or go stale.
@@ -209,6 +223,7 @@ const FlipdotWebGL = ({ discs }) => {
     let lastDraw = 0;
     const loop = regl.frame(() => {
       const now = performance.now();
+      if (lost) return; // the restore rebuilds everything anyway
       // Nothing flipping since the last draw, nothing resized: skip the frame.
       if (!dirtyRef.current && lastDraw > animateUntilRef.current) return;
       dirtyRef.current = false;
@@ -232,7 +247,7 @@ const FlipdotWebGL = ({ discs }) => {
       loop.cancel();
       regl.destroy();
     };
-  }, []);
+  }, [glEpoch]);
 
   return (
     <div ref={containerRef} className="h-full w-full">

@@ -13,6 +13,7 @@ route, and is only rendered and JPEG-encoded while a browser is watching it.
 """
 
 import threading
+import time
 
 import cv2
 import numpy as np
@@ -35,6 +36,7 @@ class SocketPublisher:
         self._lock = threading.Lock()
         self._discs = None   # flat bool array, what every client has been sent
         self._status = {}
+        self._sent_at = None  # time.monotonic() of the last frame
         self._cond = threading.Condition()
         self._preview = None
         self._preview_seq = 0
@@ -49,6 +51,7 @@ class SocketPublisher:
                 changed = np.flatnonzero(flat != self._discs)
             self._discs = flat.copy()
             self._status = status
+            self._sent_at = time.monotonic()
             if first:
                 # Clients that connected before there was anything to snapshot
                 # are still waiting for a whole matrix.
@@ -72,6 +75,12 @@ class SocketPublisher:
     def status(self):
         with self._lock:
             return dict(self._status)
+
+    @property
+    def frame_age(self):
+        """Seconds since the last frame went out; None before the first."""
+        with self._lock:
+            return None if self._sent_at is None else time.monotonic() - self._sent_at
 
     def send_snapshot(self, sid):
         """Send the whole matrix to the client that just connected."""

@@ -8,6 +8,7 @@
 Both return a (H, W) tensor of 0..1 on the model's device at PROCESS_RESOLUTION,
 and have a warm_up() that must run on the thread that will call them: cuDNN and
 cuBLAS set up per thread, and RVM's first call on a fresh thread took 2.5 s.
+reset() forgets anything carried over from earlier frames.
 """
 
 import cv2
@@ -63,10 +64,20 @@ class RobustVideoMatting:
             state = self.model(blank, downsample_ratio=RVM_DOWNSAMPLE)[2:]
             self.model(blank, *state, downsample_ratio=RVM_DOWNSAMPLE)  # the with-state path too
 
+    def reset(self):
+        self._state = [None] * 4
+
     def __call__(self, frame):
         src = _to_tensor(frame, self.device, self.dtype)
         _, alpha, *self._state = self.model(src, *self._state, downsample_ratio=RVM_DOWNSAMPLE)
-        return alpha[0, 0]
+        alpha = alpha[0, 0]
+        # The state is fed back every frame in fp16: one NaN or overflow in it
+        # would turn every later frame into NaN -- an empty mask for good.
+        if not torch.isfinite(alpha).all():
+            print("RVM output was not finite; resetting its recurrent state")
+            self.reset()
+            return torch.zeros_like(alpha)
+        return alpha
 
 
 class U2Net:
@@ -105,6 +116,9 @@ class U2Net:
             self._graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(self._graph):
                 self._static_out = self.model(self._static_in)[0]
+
+    def reset(self):
+        """Stateless: nothing to forget."""
 
     def __call__(self, frame):
         """With a graph, the result is only valid until the next call."""

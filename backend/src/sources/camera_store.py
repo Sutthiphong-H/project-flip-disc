@@ -160,7 +160,14 @@ class CameraStore:
         except FileNotFoundError:
             return 1, default
         except (OSError, ValueError, KeyError, TypeError) as e:
-            print(f"Ignoring {self.path.name} ({e}); starting with webcam {CAMERA_INDEX}")
+            # The next save would overwrite it, IP cameras and passwords included.
+            backup = self.path.with_name(self.path.name + ".bad")
+            try:
+                self.path.replace(backup)
+                kept = f"moved to {backup.name}"
+            except OSError:
+                kept = "left as it is"
+            print(f"Ignoring {self.path.name} ({e}; {kept}); starting with webcam {CAMERA_INDEX}")
             return 1, default
 
     def _save(self):

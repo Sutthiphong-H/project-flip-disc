@@ -1,5 +1,6 @@
 """Silhouette segmentation on a worker thread, split into people by distance."""
 
+import traceback
 from collections import namedtuple
 from functools import partial
 from queue import Empty, Queue
@@ -22,6 +23,11 @@ from settings import (
     PROCESS_RESOLUTION,
     REAL_PERSON_HEIGHT_M,
 )
+
+# A one-off bad frame is skipped. This many in a row is an error that sticks --
+# after a GPU driver reset the CUDA context stays broken until the process
+# restarts -- so the worker gives up and the pipeline fails (~1.5 s of frames).
+MAX_CONSECUTIVE_ERRORS = 30
 
 #: One silhouette, in PROCESS_RESOLUTION pixels.
 Person = namedtuple("Person", "x y w h distance_m")
@@ -65,7 +71,9 @@ class Segmenter:
         self._input = Queue(maxsize=1)
         self._output = Queue(maxsize=1)
         self._stopped = False
+        self._reset = False
         self._ready = Event()
+        self.error = None  # why the worker stopped, if it failed
         # Anti-flicker state, one entry per disc. Only the worker thread touches it.
         self._coverage = np.zeros(FLIPDISC_RESOLUTION[::-1], np.float32)
         self._discs = np.zeros(FLIPDISC_RESOLUTION[::-1], bool)
@@ -76,8 +84,11 @@ class Segmenter:
         return self
 
     def wait_ready(self):
-        """Block until the warm-up is done (RVM: ~2.5 s, overlapped with camera open)."""
+        """Block until the warm-up is done (RVM: ~2.5 s, overlapped with camera open).
+        Raises if the warm-up failed."""
         self._ready.wait()
+        if self.error is not None:
+            raise RuntimeError(f"segmentation model failed to start: {self.error}")
 
     def submit(self, frame):
         """Hand a frame to the worker, replacing any frame still waiting."""
@@ -89,37 +100,63 @@ class Segmenter:
         self._input.put(frame)
 
     def poll(self):
-        """Return the newest SegmentResult, or None if nothing is ready."""
+        """Return the newest SegmentResult, or None if nothing is ready. Raises
+        once the worker has given up."""
+        if self.error is not None:
+            raise RuntimeError(f"segmentation stopped: {self.error}")
         try:
             return self._output.get_nowait()
         except Empty:
             return None
 
+    def reset(self):
+        """Drop what the model carried over from earlier frames (RVM's recurrent
+        state). After a camera switch or a gap it describes another scene."""
+        self._reset = True
+
     def stop(self):
         self._stopped = True
 
     def _run(self):
-        with torch.no_grad():
-            self.model.warm_up()  # on this thread -- see vision/models.py
-            self._ready.set()
-            while not self._stopped:
+        try:
+            with torch.no_grad():
+                self.model.warm_up()  # on this thread -- see vision/models.py
+                self._ready.set()
+                self._work()
+        except Exception as e:
+            traceback.print_exc()
+            self.error = e
+        finally:
+            self._ready.set()  # a failed warm-up must not leave wait_ready() hanging
+
+    def _work(self):
+        errors = 0
+        while not self._stopped:
+            try:
+                frame = self._input.get(timeout=0.1)
+            except Empty:
+                continue
+
+            if self._reset:
+                self._reset = False
+                self.model.reset()
+
+            try:
+                result = self._segment(frame)
+                errors = 0
+            except Exception as e:
+                errors += 1
+                if errors >= MAX_CONSECUTIVE_ERRORS:
+                    raise
+                print(f"Segmentation error: {e}")
+                continue
+
+            if self._output.full():
                 try:
-                    frame = self._input.get(timeout=0.1)
+                    self._output.get_nowait()
                 except Empty:
-                    continue
-
-                try:
-                    result = self._segment(frame)
-                except Exception as e:
-                    print(f"Segmentation error: {e}")
-                    continue
-
-                if self._output.full():
-                    try:
-                        self._output.get_nowait()
-                    except Empty:
-                        pass
-                self._output.put(result)
+                    pass
+            self._output.put(result)
 
     def _segment(self, frame):
         # Use the probability as-is. Don't min-max stretch it: on an empty

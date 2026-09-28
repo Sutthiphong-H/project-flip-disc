@@ -36,12 +36,20 @@ class IdleVideo:
 
         cache = CACHE_DIR / f"{video_path.name}.{resolution[0]}x{resolution[1]}.t{threshold}.npy"
         if cache.exists() and cache.stat().st_mtime >= video_path.stat().st_mtime:
-            return np.load(cache)
+            try:
+                return np.load(cache)
+            except (OSError, ValueError, EOFError) as e:
+                print(f"Idle video cache unreadable ({e}); decoding the clip again")
 
         masks = cls._decode(video_path, resolution, threshold)
         if len(masks):
             CACHE_DIR.mkdir(exist_ok=True)
-            np.save(cache, masks)
+            # Via a temporary file: a process killed mid-save must not leave a
+            # truncated cache behind.
+            tmp = cache.with_suffix(".tmp")
+            with open(tmp, "wb") as f:
+                np.save(f, masks)
+            tmp.replace(cache)
         return masks
 
     @classmethod

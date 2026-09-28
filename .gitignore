@@ -6,6 +6,7 @@ backend/.cache/
 # The cameras set up in the web UI: per machine, holds IP camera passwords
 backend/cameras.json
 backend/cameras.tmp
+backend/cameras.json.bad
 venv/
 
 # Model weights (downloaded separately, see README)

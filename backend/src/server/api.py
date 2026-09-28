@@ -22,16 +22,24 @@ def create_server():
 
     @app.route("/status")
     def status():
-        latest = publisher.status
+        # For health checks: 503 once the pipeline has stopped sending frames.
+        latest, age = publisher.status, publisher.frame_age
+        if age is None:
+            state = "starting"
+        elif age > settings.STALL_SECONDS:
+            state = "stalled"
+        else:
+            state = "running"
         return jsonify({
-            "status": "running",
+            "status": state,
+            "frame_age_s": None if age is None else round(age, 1),
             "camera_ok": latest.get("camera_ok"),
             "resolution": list(settings.FLIPDISC_RESOLUTION),
             "mode": latest.get("mode"),
             "fps": latest.get("fps", 0.0),
             "people": latest.get("people"),
             "nearest_m": latest.get("nearest_m"),
-        })
+        }), 503 if state == "stalled" else 200
 
     @app.route("/debug.mjpg")
     def debug_stream():
@@ -154,5 +162,8 @@ def add_camera_routes(app, pipeline):
 
 
 def run(app, socketio):
+    # Flask-SocketIO refuses to start Werkzeug when stdin isn't a terminal --
+    # i.e. from Task Scheduler or any other autostart. A LAN display is the
+    # use it's fine for.
     socketio.run(app, host=settings.HOST, port=settings.PORT,
-                 debug=False, use_reloader=False)
+                 debug=False, use_reloader=False, allow_unsafe_werkzeug=True)

@@ -44,7 +44,7 @@ class FlipdiscPipeline:
         self.camera = None            # the running Camera, from setup() on
         self.segmenter = None
         self.idle_video = None
-        self._running = False
+        self._stopping = False  # set by stop(), even one that comes during setup()
         self._next_emit = 0.0
         self._switch_lock = threading.Lock()
 
@@ -77,24 +77,43 @@ class FlipdiscPipeline:
     # -- main loop -----------------------------------------------------------
 
     def run(self):
-        self.setup()
-        self._running = True
+        """Run until stop(). An error ends it too -- the camera still released --
+        and app.py's watchdog then exits so the backend gets restarted: a model
+        that won't load or a broken CUDA context doesn't fix itself."""
+        try:
+            self.setup()
+            self._loop()
+        finally:
+            self.teardown()
+
+    def _loop(self):
         last_person_seen = time.monotonic() - settings.IDLE_TIMEOUT_SECONDS
         mask, preview = None, None
+        waiting_since = None  # oldest frame handed to the segmenter without an answer
+        gap = False
 
-        while self._running:
+        while not self._stopping:
             # Wait no longer than one emit interval, so the idle clip keeps its
             # pace when the camera is down.
             frame = self.camera.read(timeout=settings.EMIT_INTERVAL)
             now = time.monotonic()
             if frame is None:
                 if not self.camera.has_signal:
+                    gap = True
                     self._without_camera(now, last_person_seen)
                 continue
+            if gap:
+                gap = False
+                self.segmenter.reset()
 
             self.segmenter.submit(frame)
+            waiting_since = waiting_since or now
             result = self.segmenter.poll()
-            if result is not None:
+            if result is None:
+                if now - waiting_since > settings.STALL_SECONDS:
+                    raise RuntimeError(f"no segmentation result for {now - waiting_since:.0f} s")
+            else:
+                waiting_since = None
                 self.people = result.people
                 mask, preview = result.flipdisc_mask, result.preview
                 if self._anyone_in_range():
@@ -116,10 +135,8 @@ class FlipdiscPipeline:
                 self._emit(mask, preview, idle_for, now)
                 mask, preview = None, None  # never re-send a stale frame
 
-        self.teardown()
-
     def stop(self):
-        self._running = False
+        self._stopping = True
 
     # -- camera --------------------------------------------------------------
 
@@ -150,6 +167,7 @@ class FlipdiscPipeline:
                     return False, f"'{cam['name']}' sent no picture; still using '{old.label}'"
                 old.stop()  # frees the device for anyone else
             self.camera = new
+            self.segmenter.reset()
             print(f"Switched camera: '{old.label}' -> '{new.label}'")
             return True, None
 
