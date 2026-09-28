@@ -5,6 +5,9 @@
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 #   pip install -r requirements.txt
 #
+# Without an NVIDIA GPU use the CPU build instead (.../whl/cpu); the backend
+# falls back to the CPU by itself.
+#
 torch>=2.7.0
 torchvision  # RVM's MobileNetV3 backbone
 opencv-python==4.11.0.86

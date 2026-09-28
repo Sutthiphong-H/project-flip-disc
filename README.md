@@ -40,6 +40,19 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 ```
 
+On a machine without an NVIDIA GPU, install the much smaller CPU build instead
+(`--index-url https://download.pytorch.org/whl/cpu`). The backend runs on the CPU
+by itself when there is no GPU, or the GPU fails a test run. That includes cards
+older than the RTX 20-series, which the cu128 build has no kernels for. It also
+falls back when the GPU can't load the model.
+
+| Device | Model input | Per frame | fps with this webcam |
+| ------ | ----------- | --------- | -------------------- |
+| RTX 5060 (CUDA graph) | 1280x720 | ~8.5 ms | 20 (the camera's limit) |
+| CPU, 6 threads | 640x360 | ~47 ms | ~17 |
+
+The header of the page shows `GPU` or `CPU` (in amber) for the one in use.
+
 Put the weights in `backend/models/`:
 
 - `rvm_mobilenetv3.pth` -- the default model ([download](https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3.pth))
@@ -126,7 +139,9 @@ distance box per person, streamed from `/debug.mjpg` only while it's open).
 | `FLIPDISC_FOCAL_LENGTH`    | `460`        | For the distance estimate; calibrate it  |
 | `FLIPDISC_MIN_AREA`        | `0.005`      | Blobs under this share of frame = noise  |
 | `FLIPDISC_MODEL`           | `rvm`        | `rvm` or `u2net`                         |
-| `FLIPDISC_PROCESS_SIZE`    | `640x360`    | Model input size, 16:9 (u2net: 512x288)  |
+| `FLIPDISC_DEVICE`          | `auto`       | `auto`, `cuda` or `cpu`                  |
+| `FLIPDISC_PROCESS_SIZE`    | per device   | Model input, 16:9. RVM: GPU 1280x720, CPU 640x360; U2NET 512x288 |
+| `FLIPDISC_THIN_BOOST`      | `2`          | Extra weight for parts thinner than a disc (fingers); 0 = off |
 | `FLIPDISC_SMOOTHING`       | `0.5`        | Anti-flicker; 1 = off, lower = steadier  |
 | `FLIPDISC_IDLE_TIMEOUT`    | `15`         | Seconds without a person before idle     |
 | `FLIPDISC_IDLE_VIDEO`      | `video.mp4`  | Clip in `backend/assets/` to loop        |

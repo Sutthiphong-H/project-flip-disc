@@ -34,28 +34,41 @@ CAMERA_FPS = _env_int("FLIPDISC_CAMERA_FPS", 30)
 
 # --- Resolutions ------------------------------------------------------------
 # --- Model ------------------------------------------------------------------
+# "auto": the NVIDIA GPU when there is one that works, otherwise the CPU (RVM
+# ~42 ms a frame there instead of ~2 ms). "cuda" or "cpu" to insist on one.
+DEVICE = os.environ.get("FLIPDISC_DEVICE", "auto").lower()
 # "rvm" (default) or "u2net" -- see vision/models.py for the trade-off.
 SEGMENTATION_MODEL = os.environ.get("FLIPDISC_MODEL", "rvm").lower()
 RVM_WEIGHTS = MODELS_DIR / "rvm_mobilenetv3.pth"
 U2NET_WEIGHTS = MODELS_DIR / "u2net_human_seg.pth"
-# RVM's backbone runs at PROCESS_RESOLUTION * this; 0.5 of 640x360 kept the
-# fingers that 512x288 at 1.0 lost, at the same ~14 ms.
+# RVM's backbone runs at the process size (below) * this; its guided filter
+# then refines the edges at the full process size.
 RVM_DOWNSAMPLE = _env_float("FLIPDISC_RVM_DOWNSAMPLE", 0.5)
 
 # --- Resolutions ------------------------------------------------------------
 # All 16:9 like the display, so nothing gets squashed on the way down.
-# PROCESS_RESOLUTION is the model's input size. Defaults are what looked best on
-# this webcam: RVM at full camera size (downsampled internally, above); U2NET at
-# 512x288 -- at 640x360 it picks up specks (it was trained at 320).
+# The model's input size depends on the model and on the device, see
+# process_resolution() below.
 # Each camera has its own resolution (set in the web UI); this is the default
 # for the first webcam. 1280x720 because this webcam switches to MJPEG there and
 # delivers 20 fps, against 15 fps of YUY2 at 640x360. Scaling it down for the
 # model is ~1 ms.
 INPUT_RESOLUTION = (1280, 720)
-_DEFAULT_PROCESS_SIZE = {"rvm": "640x360", "u2net": "512x288"}
-PROCESS_RESOLUTION = _env_size("FLIPDISC_PROCESS_SIZE",
-                               _DEFAULT_PROCESS_SIZE.get(SEGMENTATION_MODEL, "512x288"))
 FLIPDISC_RESOLUTION = (80, 45)   # must match cols/rows in Flipdot.jsx
+
+# The model's input size. RVM on a GPU gets 1280x720, so its backbone sees
+# 640x360: on the webcam against a dark background it kept both raised hands
+# and their fingers, where 640x360 (backbone 320x180) lost a whole hand. That
+# takes 4 ms as a CUDA graph. On the CPU it would be far too slow, so RVM gets
+# 640x360 there (~42 ms). U2NET gets 512x288: at 640x360 it picks up specks (it
+# was trained at 320). FLIPDISC_PROCESS_SIZE overrides all of these.
+_DEFAULT_PROCESS_SIZE = {("rvm", True): "1280x720", ("rvm", False): "640x360",
+                         ("u2net", True): "512x288", ("u2net", False): "512x288"}
+
+
+def process_resolution(model, on_gpu):
+    return _env_size("FLIPDISC_PROCESS_SIZE", _DEFAULT_PROCESS_SIZE[model, on_gpu])
+
 
 # --- People / mode switching ------------------------------------------------
 MASK_THRESHOLD = _env_float("FLIPDISC_MASK_THRESHOLD", 0.5)  # model output is 0..1
@@ -70,6 +83,11 @@ MAX_PERSON_DISTANCE_M = _env_float("FLIPDISC_MAX_DISTANCE", 15.0)
 DISC_SMOOTHING = _env_float("FLIPDISC_SMOOTHING", 0.5)  # weight of the newest frame
 DISC_ON = _env_float("FLIPDISC_DISC_ON", 0.65)
 DISC_OFF = _env_float("FLIPDISC_DISC_OFF", 0.35)
+# Fingers are narrower than a disc until you are about 1.5 m from the camera,
+# so they never cover DISC_ON of one. Parts of the silhouette thinner than a
+# disc (fingers, a thin arm) count this many times extra towards coverage; the
+# body, and its edges, are unaffected. 0 turns it off.
+DISC_THIN_BOOST = _env_float("FLIPDISC_THIN_BOOST", 2.0)
 IDLE_TIMEOUT_SECONDS = _env_float("FLIPDISC_IDLE_TIMEOUT", 15.0)
 
 # Each silhouette's distance is estimated from its height:

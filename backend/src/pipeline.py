@@ -24,9 +24,31 @@ from vision.segmenter import Segmenter
 
 
 def select_device():
-    """Return (device, use_fp16)."""
-    if torch.cuda.is_available():
-        return "cuda:0", True
+    """Return (device, use_fp16): an NVIDIA GPU if there is one that works, else the CPU.
+
+    torch.cuda.is_available() alone isn't proof. This torch build (cu128) only
+    has kernels for sm_75 (RTX 20-series) and newer; on an older card it still
+    says True and then fails on the first kernel. So run one.
+    """
+    if settings.DEVICE not in ("auto", "cuda", "cpu"):
+        raise ValueError(f"FLIPDISC_DEVICE must be auto, cuda or cpu, got {settings.DEVICE!r}")
+    if settings.DEVICE == "cpu":
+        return "cpu", False
+    if not torch.cuda.is_available():
+        reason = "no CUDA GPU found"
+    else:
+        try:
+            name = torch.cuda.get_device_name(0)
+            (torch.ones(8, device="cuda:0") * 2).sum().item()
+            # Leave cudnn.benchmark off: on the RTX 5060 its first-run autotune
+            # took 33 s of startup and picked kernels that were no faster.
+            print(f"GPU: {name}")
+            return "cuda:0", True
+        except Exception as e:
+            reason = f"the GPU failed a test ({e})"
+    if settings.DEVICE == "cuda":
+        raise RuntimeError(f"FLIPDISC_DEVICE=cuda, but {reason}")
+    print(f"Running on the CPU: {reason}")
     return "cpu", False
 
 
@@ -52,20 +74,33 @@ class FlipdiscPipeline:
 
     def setup(self):
         print(f"Using device: {self.device}, FP16: {self.use_fp16}")
-        if self.device.startswith("cuda"):
-            # Leave cudnn.benchmark off: on this GPU its first-run autotune took
-            # 33 s of startup and picked kernels that were no faster.
-            print(f"GPU: {torch.cuda.get_device_name(0)}")
-
-        print(f"Segmentation model: {settings.SEGMENTATION_MODEL} "
-              f"at {settings.PROCESS_RESOLUTION[0]}x{settings.PROCESS_RESOLUTION[1]}")
-        self.segmenter = Segmenter(load_model(self.device, self.use_fp16)).start()
+        # The model warms up on the segmenter's thread while the rest starts.
+        try:
+            self.segmenter = Segmenter(load_model(self.device, self.use_fp16)).start()
+        except Exception as e:
+            self._fall_back_to_cpu(e)
         self.idle_video = IdleVideo(settings.IDLE_VIDEO_PATH)
 
         # A camera that won't open doesn't stop the pipeline: the loop plays the
         # idle clip, the camera keeps retrying, and the web UI can pick another.
         self.camera = Camera(self.cameras.active).start()
-        self.segmenter.wait_ready()
+        try:
+            self.segmenter.wait_ready()
+        except Exception as e:
+            self._fall_back_to_cpu(e)
+            self.segmenter.wait_ready()
+        width, height = self.segmenter.model.size
+        print(f"Segmentation model: {settings.SEGMENTATION_MODEL} at {width}x{height} on the {self.device}")
+
+    def _fall_back_to_cpu(self, error):
+        """Start the segmenter on the CPU after the GPU failed to load or warm up
+        the model (out of memory, a missing kernel). Restarting wouldn't help:
+        the next process would fail the same way."""
+        if self.device == "cpu" or settings.DEVICE == "cuda":
+            raise error
+        print(f"The model failed on the GPU ({error}); running it on the CPU instead")
+        self.device, self.use_fp16 = "cpu", False
+        self.segmenter = Segmenter(load_model(self.device, self.use_fp16)).start()
 
     def teardown(self):
         if self.segmenter:
@@ -206,4 +241,5 @@ class FlipdiscPipeline:
             "nearest_m": None if nearest is None else round(float(nearest), 2),
             "time_since_person": round(idle_for, 1),
             "camera_ok": self.camera.has_signal,
+            "device": "GPU" if self.device.startswith("cuda") else "CPU",
         }, preview)

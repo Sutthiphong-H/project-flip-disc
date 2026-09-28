@@ -136,6 +136,10 @@ const Status = ({ connected, frame }) => {
       <span className={idle ? "text-amber-400" : "text-green-400"}>●</span>{" "}
       {idle ? "idle" : "active"} · {frame.fps} fps · {frame.people} people
       {frame.nearest_m != null && ` · nearest ${frame.nearest_m} m`}
+      {/* The backend falls back to the CPU on a machine without a usable GPU. */}
+      {frame.device && (
+        <span className={frame.device === "CPU" ? "text-amber-400" : undefined}> · {frame.device}</span>
+      )}
     </span>
   );
 };

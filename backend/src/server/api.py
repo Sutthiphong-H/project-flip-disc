@@ -34,6 +34,7 @@ def create_server():
             "status": state,
             "frame_age_s": None if age is None else round(age, 1),
             "camera_ok": latest.get("camera_ok"),
+            "device": latest.get("device"),
             "resolution": list(settings.FLIPDISC_RESOLUTION),
             "mode": latest.get("mode"),
             "fps": latest.get("fps", 0.0),

@@ -14,13 +14,13 @@ from settings import (
     DISC_OFF,
     DISC_ON,
     DISC_SMOOTHING,
+    DISC_THIN_BOOST,
     FLIPDISC_RESOLUTION,
     FOCAL_LENGTH_PIXELS,
     FOCAL_REFERENCE_HEIGHT,
     MASK_THRESHOLD,
     MAX_PERSON_DISTANCE_M,
     MIN_PERSON_AREA,
-    PROCESS_RESOLUTION,
     REAL_PERSON_HEIGHT_M,
 )
 
@@ -29,7 +29,7 @@ from settings import (
 # restarts -- so the worker gives up and the pipeline fails (~1.5 s of frames).
 MAX_CONSECUTIVE_ERRORS = 30
 
-#: One silhouette, in PROCESS_RESOLUTION pixels.
+#: One silhouette, in pixels of the model's output.
 Person = namedtuple("Person", "x y w h distance_m")
 
 #: `people` is everyone found, in range or not. `preview` is a zero-argument
@@ -174,8 +174,15 @@ class Segmenter:
         and off with every frame's noise. Smoothing the coverage over time and
         using separate on/off thresholds holds it steady.
         """
-        coverage = cv2.resize(mask, FLIPDISC_RESOLUTION, interpolation=cv2.INTER_AREA)
-        self._coverage += DISC_SMOOTHING * (coverage / np.float32(255) - self._coverage)
+        coverage = cv2.resize(mask, FLIPDISC_RESOLUTION, interpolation=cv2.INTER_AREA) / np.float32(255)
+        if DISC_THIN_BOOST:
+            # What an opening one disc across removes is thinner than a disc.
+            # (A square kernel: 0.4 ms at 1280x720; an ellipse took 3 ms.)
+            disc = max(3, (mask.shape[1] // FLIPDISC_RESOLUTION[0]) | 1)
+            opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((disc, disc), np.uint8))
+            thin = cv2.resize(cv2.subtract(mask, opened), FLIPDISC_RESOLUTION, interpolation=cv2.INTER_AREA)
+            coverage = np.minimum(1, coverage + DISC_THIN_BOOST / np.float32(255) * thin)
+        self._coverage += DISC_SMOOTHING * (coverage - self._coverage)
         self._discs = (self._coverage > DISC_ON) | (self._discs & (self._coverage >= DISC_OFF))
         return self._discs.astype(np.uint8) * 255
 
@@ -186,7 +193,7 @@ class Segmenter:
         # numpy boolean indexing: 1 ms instead of 23 ms at 1280x720.)
         preview = cv2.convertScaleAbs(frame, alpha=1 / 3)
         cv2.copyTo(frame, full, preview)
-        scale = frame.shape[1] / PROCESS_RESOLUTION[0]
+        scale = frame.shape[1] / mask.shape[1]
         to_focal_px = FOCAL_REFERENCE_HEIGHT / mask.shape[0]
         for p in people:
             colour = (0, 255, 0) if p.distance_m <= MAX_PERSON_DISTANCE_M else (0, 0, 255)

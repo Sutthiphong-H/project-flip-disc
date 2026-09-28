@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 from torchvision.models.mobilenetv3 import MobileNetV3, InvertedResidualConfig
-from torchvision.transforms.functional import normalize
 
 class MobileNetV3LargeEncoder(MobileNetV3):
     def __init__(self, pretrained: bool = False):
@@ -32,9 +31,16 @@ class MobileNetV3LargeEncoder(MobileNetV3):
 
         del self.avgpool
         del self.classifier
+
+        # Modified for flip-disc: ImageNet mean/std as buffers instead of
+        # torchvision's normalize(), which builds them from lists on every call.
+        # That CPU->GPU copy can't be captured in a CUDA graph. Not persistent,
+        # so the published weights still load as they are.
+        self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1), persistent=False)
+        self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1), persistent=False)
         
     def forward_single_frame(self, x):
-        x = normalize(x, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        x = (x - self.mean) / self.std
         
         x = self.features[0](x)
         x = self.features[1](x)
